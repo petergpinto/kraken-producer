@@ -1,6 +1,6 @@
 use amqprs::{
     callbacks::{DefaultChannelCallback, DefaultConnectionCallback},
-    channel::{BasicPublishArguments, Channel, QueueBindArguments, QueueDeclareArguments},
+    channel::{BasicPublishArguments, Channel, QueueBindArguments},
     connection::{Connection, OpenConnectionArguments},
     BasicProperties,
 };
@@ -24,9 +24,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let connection = Connection::open(&OpenConnectionArguments::new(
-        "kafka-cluster.default.svc.cluster.local",
+        "rabbitmq.k8s.peterpinto.dev",
         5672,
-        "default_user_rDifQ_c2ZsRybOVdPaI",
+        "rust_producer",
         "vMsUu0H8ESh44_34lU3e_2EALfuKsRMF",
     ))
     .await
@@ -42,11 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .unwrap();
 
-    let (queue_name, _, _) = channel
-        .queue_declare(QueueDeclareArguments::default())
-        .await
-        .unwrap()
-        .unwrap();
+    channel.queue_bind(QueueBindArguments::new("crypto", "market", "market.crypto"));
 
     info!("Start of Log");
     let mut connection = KrakenWebsocketConnection::new("wss://ws.kraken.com/v2".to_owned())?;
@@ -62,12 +58,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 parse_tickers(
                     parsed["data"].clone(),
                     channel.clone(),
-                    &queue_name,
-                    "amq.topic",
+                    "crypto",
+                    "market",
                 )
                 .await
             }
             "heartbeat" => trace!("Heartbeat received"),
+            "status" => info!("Status: {:#?}", parsed),
             _ => error!("Message type unknown, channel {:#?}", parsed["channel"]),
         }
     }
@@ -88,25 +85,21 @@ async fn parse_tickers(
     for value in array {
         trace!("Tick entry: {:#?}", value);
 
-        let routing_key = value["symbol"].as_str().unwrap();
-        channel
-            .queue_bind(QueueBindArguments::new(
-                &queue_name,
-                exchange_name,
-                routing_key,
-            ))
-            .await
-            .unwrap();
+        let routing_key = "market.crypto.".to_owned()+value["symbol"].as_str().unwrap();
+
         let args = BasicPublishArguments::new(&exchange_name, &routing_key);
 
-        channel
+        match channel
             .basic_publish(
                 BasicProperties::default(),
                 serde_json::to_vec(value).unwrap(),
                 args,
             )
             .await
-            .unwrap();
+        {
+            Ok(_) => trace!("Message published"),
+            Err(e) => error!("{e}"),
+        };
     }
 }
 struct KrakenWebsocketConnection {
@@ -116,7 +109,10 @@ struct KrakenWebsocketConnection {
 impl KrakenWebsocketConnection {
     fn new(url: String) -> Result<KrakenWebsocketConnection, Box<dyn std::error::Error>> {
         let ws_url = websocket::url::Url::parse(&url)?;
-        let ssl_config = websocket::native_tls::TlsConnector::new()?;
+        let ssl_config = websocket::native_tls::TlsConnector::builder()
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true)
+            .build()?;
         let client: websocket::sync::Client<Box<dyn NetworkStream + Send>> =
             websocket::ClientBuilder::from_url(&ws_url.clone())
                 .connect(Some(ssl_config.clone()))?;

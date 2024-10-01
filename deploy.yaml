@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rust-producer
+spec:
+  containers:
+  - name: rust-producer
+    image: gitea.k8s.peterpinto.dev/petergpinto/kraken-rabbitmq-producer:1.0.0
+    imagePullPolicy: Always
+    env:
+    - name: RUST_LOG
+      value: info
