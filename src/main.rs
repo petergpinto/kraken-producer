@@ -1,8 +1,5 @@
 use amqprs::{
-    callbacks::{DefaultChannelCallback, DefaultConnectionCallback},
-    channel::{BasicPublishArguments, Channel, QueueBindArguments},
-    connection::{Connection, OpenConnectionArguments},
-    BasicProperties,
+    callbacks::{DefaultChannelCallback, DefaultConnectionCallback}, channel::{BasicPublishArguments, Channel, QueueBindArguments}, connection::{Connection, OpenConnectionArguments}, tls::{self, TlsAdaptor}, BasicProperties
 };
 use log::{error, info, trace};
 use serde_json::Value;
@@ -25,12 +22,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let connection = Connection::open(&OpenConnectionArguments::new(
         "rabbitmq.k8s.peterpinto.dev",
-        5672,
+        5671,
         "rust_producer",
         "vMsUu0H8ESh44_34lU3e_2EALfuKsRMF",
-    ))
-    .await
-    .unwrap();
+    ).tls_adaptor(TlsAdaptor::without_client_auth(None, "rabbitmq.k8s.peterpinto.dev".to_string())?).finish())
+    .await?;
     connection
         .register_callback(DefaultConnectionCallback)
         .await
