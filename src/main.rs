@@ -1,5 +1,8 @@
 use amqprs::{
-    callbacks::{DefaultChannelCallback, DefaultConnectionCallback}, channel::{BasicPublishArguments, Channel}, connection::{Connection, OpenConnectionArguments}, BasicProperties, DELIVERY_MODE_PERSISTENT
+    callbacks::{DefaultChannelCallback, DefaultConnectionCallback},
+    channel::{BasicPublishArguments, Channel},
+    connection::{Connection, OpenConnectionArguments},
+    BasicProperties, DELIVERY_MODE_PERSISTENT,
 };
 use log::{error, info, trace};
 use serde_json::Value;
@@ -31,9 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let channel = connection.open_channel(None).await?;
-    channel
-        .register_callback(DefaultChannelCallback)
-        .await?;
+    channel.register_callback(DefaultChannelCallback).await?;
 
     info!("Start of Log");
     let mut connection = KrakenWebsocketConnection::new("wss://ws.kraken.com/v2".to_owned())?;
@@ -45,14 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         trace!("Full Message: {:#?}", parsed);
         trace!("Message Channel: {:#?}", parsed["channel"]);
         match parsed["channel"].as_str().unwrap_or("") {
-            "ticker" => {
-                parse_tickers(
-                    parsed["data"].clone(),
-                    channel.clone(),
-                    "market",
-                )
-                .await?
-            }
+            "ticker" => parse_tickers(parsed["data"].clone(), channel.clone(), "market").await?,
             "heartbeat" => trace!("Heartbeat received"),
             "status" => info!("Status: {:#?}", parsed),
             _ => error!("Message type unknown, channel {:#?}", parsed["channel"]),
@@ -75,22 +69,22 @@ async fn parse_tickers(
     for value in array {
         trace!("Tick entry: {:#?}", value);
 
-        let symbol = value["symbol"].as_str().ok_or("Unable to convert symbol to string")?;
-        let routing_key = "market.crypto.".to_owned()+symbol;
+        let symbol = value["symbol"]
+            .as_str()
+            .ok_or("Unable to convert symbol to string")?;
+        let routing_key = "market.crypto.".to_owned() + symbol;
 
         let args = BasicPublishArguments::new(exchange_name, &routing_key);
 
-        match channel
+        channel
             .basic_publish(
-                BasicProperties::default().with_delivery_mode(DELIVERY_MODE_PERSISTENT).finish(),
+                BasicProperties::default()
+                    .with_delivery_mode(DELIVERY_MODE_PERSISTENT)
+                    .finish(),
                 serde_json::to_vec(value)?,
                 args,
             )
-            .await
-        {
-            Ok(_) => trace!("Message published"),
-            Err(e) => error!("{e}"),
-        };
+            .await?;
     }
     Ok(())
 }
