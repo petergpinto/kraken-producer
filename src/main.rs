@@ -4,9 +4,10 @@ use amqprs::{
     connection::{Connection, OpenConnectionArguments},
     BasicProperties, DELIVERY_MODE_PERSISTENT,
 };
-use log::{error, info, trace};
+use log::{debug, error, info, trace};
 use serde_json::Value;
 use websocket::{stream::sync::NetworkStream, ws::dataframe::DataFrame};
+use chrono::{DateTime, Utc};
 
 static SUB_ALL_TICKERS: &str = "{
     \"method\": \"subscribe\",
@@ -41,12 +42,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let message = websocket::Message::text(SUB_ALL_TICKERS);
     connection.client.send_message(&message)?;
     for raw_message in connection.client.incoming_messages() {
-        let parsed: serde_json::Value =
+        let recv_time = Utc::now();
+        let mut parsed: serde_json::Value =
             serde_json::from_reader(raw_message?.take_payload().as_slice())?;
+        parsed["recv_time"] = serde_json::Value::String(recv_time.to_rfc3339());
         trace!("Full Message: {:#?}", parsed);
         trace!("Message Channel: {:#?}", parsed["channel"]);
         match parsed["channel"].as_str().unwrap_or("") {
-            "ticker" => parse_tickers(parsed["data"].clone(), channel.clone(), "market").await?,
+            "ticker" => parse_tickers(parsed["data"].clone(), channel.clone(), "market", recv_time).await?,
             "heartbeat" => trace!("Heartbeat received"),
             "status" => info!("Status: {:#?}", parsed),
             _ => error!("Message type unknown, channel {:#?}", parsed["channel"]),
@@ -59,6 +62,7 @@ async fn parse_tickers(
     data: serde_json::Value,
     channel: Channel,
     exchange_name: &str,
+    timestamp: DateTime<Utc>
 ) -> Result<(), Box<dyn std::error::Error>> {
     let a: &Vec<Value> = &vec![];
     let array = match data.as_array() {
@@ -67,25 +71,29 @@ async fn parse_tickers(
     };
 
     for value in array {
+        let mut record = value.clone();
+        record["recv_time"] = serde_json::Value::String(timestamp.to_rfc3339());
         trace!("Tick entry: {:#?}", value);
 
-        let symbol = value["symbol"]
+        let symbol = record["symbol"]
             .as_str()
             .ok_or("Unable to convert symbol to string")?;
         let routing_key = "market.crypto.".to_owned() + symbol;
 
         let args = BasicPublishArguments::new(exchange_name, &routing_key);
 
+        debug!("{routing_key}: {:#?}", args);
         channel
             .basic_publish(
                 BasicProperties::default()
                     .with_delivery_mode(DELIVERY_MODE_PERSISTENT)
                     .finish(),
-                serde_json::to_vec(value)?,
+                serde_json::to_vec(&record)?,
                 args,
             )
             .await?;
     }
+    info!("Produced {} messages to broker", array.len());
     Ok(())
 }
 struct KrakenWebsocketConnection {
