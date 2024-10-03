@@ -5,7 +5,7 @@ metadata:
 spec:
   containers:
   - name: rust-producer
-    image: gitea.k8s.peterpinto.dev/petergpinto/kraken-rabbitmq-producer:1.0.0
+    image: gitea.k8s.peterpinto.dev/petergpinto/kraken-rabbitmq-producer:1.0.2
     imagePullPolicy: Always
     env:
     - name: RUST_LOG
